@@ -24,6 +24,24 @@ function resolveShmSize(dockerShmSize?: string): string {
 }
 
 class Docker {
+  /**
+   * Converts a Windows path to the POSIX-style path that Docker Desktop for
+   * Windows expects when running Linux containers. Docker Desktop automatically
+   * maps /c/... to the C: drive.
+   *
+   * Examples:
+   *   "C:\\Users\\Lucas"          → "/c/Users/Lucas"
+   *   "C:/Users/Lucas"            → "/c/Users/Lucas"
+   *   "/already/posix"            → "/already/posix"  (no-op)
+   */
+  private static toDockerPosixPath(hostPath: string): string {
+    if (!hostPath || hostPath.startsWith('/')) return hostPath;
+
+    return hostPath
+      .replace(/\\/g, '/')
+      .replace(/^([A-Za-z]):/, (_match, drive) => `/${drive.toLowerCase()}`);
+  }
+
   // Docker Desktop for Windows can run either Windows or Linux containers,
   // and a Windows host with Docker in Linux-containers mode still needs
   // Linux-style image tags, workdir paths, and command shape - the container
@@ -247,7 +265,17 @@ class Docker {
       runTests,
     } = options as Options & { commands?: string };
 
-    const home = homeDir;
+    // When a Windows host is running a Linux container (Docker Desktop in
+    // Linux-containers mode), host paths need POSIX conversion for Docker's
+    // volume mount parser — a colon in "C:\..." would be misread as the
+    // host:container separator. On a native Linux host these are already
+    // POSIX paths and the conversion is a no-op.
+    const home = Docker.toDockerPosixPath(homeDir);
+    const workDir = Docker.toDockerPosixPath(currentWorkDir);
+    const distPath = Docker.toDockerPosixPath(cliDistPath);
+    const sshAgentPath = sshAgent ? Docker.toDockerPosixPath(sshAgent) : "";
+    const sshPubKeysPath = sshPublicKeysDirectoryPath ? Docker.toDockerPosixPath(sshPublicKeysDirectoryPath) : "";
+
     const envVarString = ImageEnvironmentFactory.getEnvVarString(options, engineEnvVars(options)).replace(
       / \\\n/g,
       " ",
@@ -275,22 +303,22 @@ class Docker {
       isUnityDefaultFlow ? "--env UNITY_SERIAL" : "",
       `--env GITHUB_WORKSPACE=${dockerWorkspacePath}`,
       gitPrivateToken ? `--env GIT_PRIVATE_TOKEN="${gitPrivateToken}"` : "",
-      sshAgent ? "--env SSH_AUTH_SOCK=/ssh-agent" : "",
+      sshAgentPath ? "--env SSH_AUTH_SOCK=/ssh-agent" : "",
       dockerCpuLimit ? `--cpus=${dockerCpuLimit}` : "",
       dockerMemoryLimit ? `--memory=${dockerMemoryLimit}` : "",
       resolveShmSize(dockerShmSize) ? `--shm-size=${resolveShmSize(dockerShmSize)}` : "",
       useHostNetwork ? "--net=host" : "",
-      `--volume "${home}":"/root:z"`,
-      `--volume "${currentWorkDir}":"${dockerWorkspacePath}:z"`,
-      isUnityDefaultFlow ? `--volume "${cliDistPath}/default-build-script:/UnityBuilderAction:z"` : "",
+      `--volume "${home}:/root:z"`,
+      `--volume "${workDir}:${dockerWorkspacePath}:z"`,
+      isUnityDefaultFlow ? `--volume "${distPath}/default-build-script:/UnityBuilderAction:z"` : "",
       // Mounted for BOTH flows, unlike default-build-script: the settings
       // applier has to be available even when the user brings their own
       // buildMethod, since that is exactly the case it exists to serve. The
       // build step only copies it into the project when a spec is set.
-      `--volume "${cliDistPath}/settings-applier:/GameCISettingsApplier:z"`,
-      isUnityDefaultFlow ? `--volume "${cliDistPath}/platforms/ubuntu/steps:/steps:z"` : "",
-      isUnityDefaultFlow ? `--volume "${cliDistPath}/platforms/ubuntu/entrypoint.sh:/entrypoint.sh:z"` : "",
-      isUnityDefaultFlow ? `--volume "${cliDistPath}/unity-config:/usr/share/unity3d/config:z"` : "",
+      `--volume "${distPath}/settings-applier:/GameCISettingsApplier:z"`,
+      isUnityDefaultFlow ? `--volume "${distPath}/platforms/ubuntu/steps:/steps:z"` : "",
+      isUnityDefaultFlow ? `--volume "${distPath}/platforms/ubuntu/entrypoint.sh:/entrypoint.sh:z"` : "",
+      isUnityDefaultFlow ? `--volume "${distPath}/unity-config:/usr/share/unity3d/config:z"` : "",
       // --testPlatforms=standalone copies these Editor/Player helper scripts
       // into the project before building the standalone test player. Without
       // this mount, test.sh's `cp -R "/UnityTestRunnerAction/Assets/..."`
@@ -299,11 +327,11 @@ class Docker {
       // /UnityStandaloneScripts) - only the mount was lost in the port to the
       // CLI, not the scripts themselves.
       isUnityDefaultFlow && runTests
-        ? `--volume "${cliDistPath}/test-standalone-scripts:/UnityTestRunnerAction:z"`
+        ? `--volume "${distPath}/test-standalone-scripts:/UnityTestRunnerAction:z"`
         : "",
-      sshAgent ? `--volume ${sshAgent}:/ssh-agent` : "",
-      sshAgent && !sshPublicKeysDirectoryPath ? "--volume /home/runner/.ssh/known_hosts:/root/.ssh/known_hosts:ro" : "",
-      sshPublicKeysDirectoryPath ? `--volume ${sshPublicKeysDirectoryPath}:/root/.ssh:ro` : "",
+      sshAgentPath ? `--volume ${sshAgentPath}:/ssh-agent` : "",
+      sshAgentPath && !sshPubKeysPath ? "--volume /home/runner/.ssh/known_hosts:/root/.ssh/known_hosts:ro" : "",
+      sshPubKeysPath ? `--volume ${sshPubKeysPath}:/root/.ssh:ro` : "",
       image,
       isUnityDefaultFlow ? "/bin/bash /entrypoint.sh" : wrappedCommands!,
     ]

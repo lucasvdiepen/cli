@@ -176,8 +176,8 @@ describe("Docker", () => {
     expect(command).toContain('--env UNITY_LICENSE="ci-stub-license"');
     // The line-continuation strip (` \\\n` -> space) must not eat an escaped backslash at the end of a value.
     expect(command).toContain('--env CUSTOM_PARAMETERS="trailing backslash \\\\" --env');
-    expect(command).toContain('--volume "/home/runner":"/root:z"');
-    expect(command).toContain('--volume "/home/runner/work/cli/cli":"/github/workspace:z"');
+    expect(command).toContain('--volume "/home/runner:/root:z"');
+    expect(command).toContain('--volume "/home/runner/work/cli/cli:/github/workspace:z"');
     expect(command).toContain("game-ci/unity-editor-stub:latest");
     expect(command).toContain("/bin/bash /entrypoint.sh");
     expect(command).not.toContain("\n");
@@ -675,5 +675,69 @@ describe("Docker", () => {
       method: "",
     };
     await Docker.run(image, parameters);
+  });
+
+  describe("toDockerPosixPath", () => {
+    it("converts a Windows drive path with backslashes to POSIX", () => {
+      expect((Docker as any).toDockerPosixPath("C:\\Users\\Lucas")).toBe("/c/Users/Lucas");
+    });
+
+    it("converts a Windows drive path with forward slashes to POSIX", () => {
+      expect((Docker as any).toDockerPosixPath("C:/Users/Lucas")).toBe("/c/Users/Lucas");
+    });
+
+    it("leaves POSIX paths unchanged", () => {
+      expect((Docker as any).toDockerPosixPath("/home/runner")).toBe("/home/runner");
+    });
+
+    it("handles empty string", () => {
+      expect((Docker as any).toDockerPosixPath("")).toBe("");
+    });
+
+    it("handles a deeply nested Windows path", () => {
+      expect((Docker as any).toDockerPosixPath("D:\\work\\cli\\dist")).toBe("/d/work/cli/dist");
+    });
+
+    it("lowercases the drive letter", () => {
+      expect((Docker as any).toDockerPosixPath("E:\\Builds")).toBe("/e/Builds");
+    });
+  });
+
+  it("converts Windows paths to POSIX in Linux command when host is win32", () => {
+    const command = (Docker as any).getLinuxCommand("unityci/editor:ubuntu-6000.3.2f1-windows-mono-3", {
+      hostOS: "linux",
+      currentWorkDir: "C:\\Users\\Lucas\\project",
+      homeDir: "C:\\Users\\Lucas",
+      cliDistPath: "C:\\Users\\Lucas\\cli\\dist",
+      sshAgent: "",
+      gitPrivateToken: "",
+      dockerWorkspacePath: "/github/workspace",
+      engine: "unity",
+    });
+
+    // No Windows drive letter colons should appear in the command
+    expect(command).not.toContain('"C:');
+    // POSIX-converted paths should be present
+    expect(command).toContain('"/c/Users/Lucas:/root:z"');
+    expect(command).toContain('"/c/Users/Lucas/project:/github/workspace:z"');
+    expect(command).toContain('"/c/Users/Lucas/cli/dist');
+    expect(command).toContain("unityci/editor:ubuntu-6000.3.2f1-windows-mono-3");
+    expect(command).toContain("/bin/bash /entrypoint.sh");
+  });
+
+  it("leaves Linux paths unchanged in Linux command (no-op conversion)", () => {
+    const command = (Docker as any).getLinuxCommand("unityci/editor:ubuntu-2019.4.40f1-base-3", {
+      hostOS: "linux",
+      currentWorkDir: "/home/runner/work/cli/cli",
+      homeDir: "/home/runner",
+      cliDistPath: "/home/runner/work/cli/cli/dist",
+      sshAgent: "",
+      gitPrivateToken: "",
+      dockerWorkspacePath: "/github/workspace",
+      engine: "unity",
+    });
+
+    expect(command).toContain('--volume "/home/runner:/root:z"');
+    expect(command).toContain('--volume "/home/runner/work/cli/cli:/github/workspace:z"');
   });
 });
