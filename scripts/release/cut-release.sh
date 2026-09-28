@@ -23,7 +23,7 @@
 
 set -euo pipefail
 
-REPO="game-ci/cli"
+REPO="lucasvdiepen/cli"
 TAG="${1:?Usage: cut-release.sh <tag> [notes-file]}"
 NOTES_FILE="${2:-}"
 COMMIT="$(git rev-parse HEAD)"
@@ -65,9 +65,9 @@ for _ in $(seq 1 24); do
   # the ISO 8601 timestamps (which sort lexically the same as chronologically).
   LATEST_JSON="$(gh run list --repo "$REPO" --workflow release-cli.yml --event workflow_dispatch --limit 1 --json databaseId,createdAt --jq '.[0] // empty')"
   if [ -n "$LATEST_JSON" ]; then
-    LATEST_CREATED="$(echo "$LATEST_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['createdAt'])")"
+    LATEST_CREATED="$(echo "$LATEST_JSON" | node -e "console.log(JSON.parse(require('fs').readFileSync(0, 'utf-8')).createdAt)")"
     if [[ "$LATEST_CREATED" > "$DISPATCH_TIME" || "$LATEST_CREATED" == "$DISPATCH_TIME" ]]; then
-      RUN_ID="$(echo "$LATEST_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin)['databaseId'])")"
+      RUN_ID="$(echo "$LATEST_JSON" | node -e "console.log(JSON.parse(require('fs').readFileSync(0, 'utf-8')).databaseId)")"
       break
     fi
   fi
